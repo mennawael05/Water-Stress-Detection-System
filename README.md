@@ -1,9 +1,8 @@
 # 💧 Water Stress Prediction — Model Comparison
 
->What your project does and what problem it solves
+> What your project does and what problem it solves
 Groundwater is invisible — you can't see it drying up the way you can see a river. Egypt and the wider MENA region face severe groundwater depletion, but measuring it requires expensive wells or waiting for satellite data that arrives months late. Your project builds a model that predicts groundwater storage levels using data that is already freely available every month, so you can estimate what's happening underground without needing to drill anything.
 The output is a number called GRACE LWE (Land Water Equivalent), measured in centimetres. A negative number means groundwater is depleting. Your model learns to predict that number for any location and month.
-
 ---
 
 ## 🌍 Problem Statement
@@ -30,15 +29,16 @@ Water scarcity is one of the most critical global challenges. This project addre
 
 ## 🤖 Models Overview
 
-Five deep learning architectures were developed and compared for water stress prediction:
+Six deep learning architectures were developed and compared for water stress prediction:
 
 | # | Model | File | Task | Input |
 |---|-------|------|------|-------|
 | 1 | **CNN + LSTM** | `cnn_lstm.ipynb` | Binary Classification | `(N, T, H, W, 7)` |
 | 2 | **CNN + Transformer** | `CNN___Transformer.ipynb` | Binary Classification | `(N, T, H, W, 7)` |
 | 3 | **ViT** (Vision Transformer) | `VIT.ipynb` | Binary Classification | `(N, T, H, W, 7)` |
-| 4 | **CNN + RNN** (GLDAS+Satellite) | `CNN_RNN_GLDAS_Satellite.ipynb` | Regression | `(N, 24, 15)` |
-| 5 | **ViT + Bi-LSTM** | `ViT_LSTM_WaterStress_SequenceInput_1__1_.ipynb` | Regression | `(N, 12, 1, 1, 14)` |
+| 4 | **CNN + GRU** | `CNN_GRU.ipynb` | Binary Classification | `(N, T, H, W, 7)` |
+| 5 | **CNN + RNN** (GLDAS+Satellite) | `CNN_RNN_GLDAS_Satellite.ipynb` | Regression | `(N, 24, 15)` |
+| 6 | **ViT + Bi-LSTM** | `ViT_LSTM_WaterStress_SequenceInput_1__1_.ipynb` | Regression | `(N, 12, 1, 1, 14)` |
 
 ---
 
@@ -98,7 +98,28 @@ Input (N, T=5, H=4, W=4, C=7)
 
 ---
 
-### 4. CNN + RNN (GLDAS + Satellite)
+### 4. CNN + GRU *(Bidirectional)*
+```
+Input (N, T, H, W, 7)
+   └─► SpatialCNN per timestep
+         Conv2d(7→16) + BN + ReLU
+         Conv2d(16→32) + BN + ReLU
+         AdaptiveAvgPool2d(1)
+         Linear(32→32) + Dropout(0.5)
+   └─► Bi-GRU(input=32, hidden=64, layers=1, bidirectional=True)
+         → output dim = 64×2 = 128
+   └─► Linear(128→32) → ReLU → Dropout(0.5) → Linear(32→1)
+```
+- **Task:** Binary classification (Stressed / Not-Stressed)
+- **Loss:** BCEWithLogitsLoss (numerically stable, no explicit Sigmoid)
+- **Optimizer:** Adam (lr=1e-3), ReduceLROnPlateau
+- **Epochs:** 25
+- **Key Advantage:** Bidirectional GRU reads the temporal sequence both forward and backward, capturing future context — unlike the unidirectional LSTM in Model 1
+- **Metrics:** Accuracy, ROC-AUC, F1, Confusion Matrix
+
+---
+
+### 5. CNN + RNN (GLDAS + Satellite)
 ```
 Input (N, seq_len=24, features=15)
    └─► Conv1d blocks (1D temporal CNN)
@@ -114,7 +135,7 @@ Input (N, seq_len=24, features=15)
 
 ---
 
-### 5. ViT + Bi-LSTM (Most Advanced)
+### 6. ViT + Bi-LSTM (Most Advanced)
 ```
 Input (N, T=12, H=1, W=1, C=14)
    └─► ViT Encoder per timestep (patch=1×1, acts as feature projector)
@@ -135,19 +156,20 @@ Input (N, T=12, H=1, W=1, C=14)
 
 ## ⚖️ Model Comparison
 
-| Criterion | CNN+LSTM | CNN+Transformer | ViT | CNN+RNN | ViT+BiLSTM |
-|-----------|----------|-----------------|-----|---------|------------|
-| **Task** | Classification | Classification | Classification | Regression | Regression |
-| **Spatial Modeling** | ✅ Conv2D | ✅ Conv2D | ✅ Patch Attention | ❌ Conv1D (temporal) | ✅ ViT patches |
-| **Temporal Modeling** | ✅ LSTM | ✅ Transformer | ⚠️ Implicit (positional) | ✅ RNN | ✅ Bi-LSTM + Attention |
-| **Data Sources** | Synthetic tensors | Synthetic tensors | Synthetic tensors | GLDAS + Satellite | GLDAS + Satellite |
-| **Sequence Length** | 5 timesteps | 5 timesteps | 5 timesteps | 24 months | 12 months |
-| **Features** | 7 | 7 | 7 | 15 | 14 |
-| **Augmentation** | ❌ | ❌ | ✅ MixUp + flips | ❌ | ❌ |
-| **Class Imbalance Handling** | ❌ | ❌ | ✅ Weighted loss | N/A | N/A |
-| **Complexity** | Medium | Medium | High | Medium | Very High |
-| **Output** | Binary label | Binary label | Binary label | Continuous index | GRACE LWE (cm) |
-| **Leakage Protection** | Stratified split | Stratified split | Stratified split | Random split | ✅ Spatial split |
+| Criterion | CNN+LSTM | CNN+Transformer | ViT | CNN+GRU | CNN+RNN | ViT+BiLSTM |
+|-----------|----------|-----------------|-----|---------|---------|------------|
+| **Task** | Classification | Classification | Classification | Classification | Regression | Regression |
+| **Spatial Modeling** | ✅ Conv2D | ✅ Conv2D | ✅ Patch Attention | ✅ Conv2D | ❌ Conv1D (temporal) | ✅ ViT patches |
+| **Temporal Modeling** | ✅ LSTM (uni) | ✅ Transformer | ⚠️ Implicit (positional) | ✅ Bi-GRU | ✅ RNN | ✅ Bi-LSTM + Attention |
+| **Data Sources** | Synthetic | Synthetic | Synthetic | Synthetic | GLDAS + Satellite | GLDAS + Satellite |
+| **Sequence Length** | 5 timesteps | 5 timesteps | 5 timesteps | 5 timesteps | 24 months | 12 months |
+| **Features** | 7 | 7 | 7 | 7 | 15 | 14 |
+| **Augmentation** | ❌ | ❌ | ✅ MixUp + flips | ❌ | ❌ | ❌ |
+| **Class Imbalance Handling** | ❌ | ❌ | ✅ Weighted loss | ❌ | N/A | N/A |
+| **Bidirectional** | ❌ | N/A | N/A | ✅ | ❌ | ✅ |
+| **Complexity** | Medium | Medium | High | Medium | Medium | Very High |
+| **Output** | Binary label | Binary label | Binary label | Binary label | Continuous index | GRACE LWE (cm) |
+| **Leakage Protection** | Stratified | Stratified | Stratified | Stratified | Random | ✅ Spatial split |
 
 ---
 
@@ -186,6 +208,7 @@ Input (N, T=12, H=1, W=1, C=14)
 ├── cnn_lstm.ipynb                         # CNN + LSTM classifier
 ├── CNN___Transformer.ipynb                # CNN + Transformer classifier
 ├── VIT.ipynb                              # Vision Transformer classifier
+├── CNN_GRU.ipynb                          # CNN + Bidirectional GRU classifier
 ├── CNN_RNN_GLDAS_Satellite.ipynb          # CNN + RNN regressor (GLDAS + Satellite)
 ├── ViT_LSTM_WaterStress_SequenceInput.ipynb  # ViT + Bi-LSTM regressor (most advanced)
 ├── data/
@@ -262,7 +285,11 @@ Early detection of water stress enables:
 
 ---
 
+## 📚 References
 
+- GLDAS: [NASA Global Land Data Assimilation System](https://ldas.gsfc.nasa.gov/gldas/)
+- GRACE: [Gravity Recovery and Climate Experiment](https://grace.jpl.nasa.gov/)
+- Sentinel-2: [ESA Copernicus Programme](https://sentinel.esa.int/web/sentinel/missions/sentinel-2)
 
 ---
 
